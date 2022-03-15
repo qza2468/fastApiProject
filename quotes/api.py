@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, Column, Integer, Text, String
 from typing import Optional, List
 Base = declarative_base()
 
-engine = None
+sql_engine = None
 
 
 class QuoteSchema(Base):
@@ -43,7 +43,7 @@ quotes_index_max = 0
 
 
 def get_session() -> Session:
-    session = Session(engine)
+    session = Session(sql_engine)
     try:
         yield session
     finally:
@@ -53,7 +53,7 @@ def get_session() -> Session:
 @router.on_event("startup")
 async def init():
     global quotes_index_max
-    global engine
+    global sql_engine
 
     password = getpass.getpass("请输入密码")
 
