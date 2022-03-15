@@ -58,11 +58,13 @@ redis_pool = None
 # when give token add it to the follow two base, so that we could delete the user token when delete user or logout user.
 REDIS_BASE = "token2user"
 REDIS_USER_BASE = "qza2468"
+digest_salt = "qza2468"
 TIMEOUT_FORMAT = "%Y-%m-%d %H:%M:%S"
 MAX_TOKEN_PER_USER = 5
 
 EXPIRE_TIMEOUT = datetime.timedelta(days=1)
 
+# return the user2tokens db name
 def userdb(username: str):
     return REDIS_USER_BASE + username
 
@@ -80,51 +82,90 @@ def get_redis_pool():
     finally:
         redis_conn.close()
 
-def get_cookie(redis_conn: redis.Redis, token:str):
+# try to get the token, if not exist return (None, None), else return (username, expire)
+def get_cookie(redis_conn: redis.Redis, token: str):
     cookie = redis_conn.hget(REDIS_BASE, token)
-    return cookie.split(";", 1)
+    if cookie:
+        return cookie.split(";", 1)
+    else:
+        return None, None
 
+# remove the token from token2user and user2tokens, if token to no user, then just return.
 def del_cookie(redis_conn: redis.Redis, token: str):
     username, timeout = get_cookie(redis_conn, token)
+    if not username:
+        return
 
     redis_conn.hdel(REDIS_BASE, token)
 
+    if username:
+        redis_conn.srem(userdb(username), token)
+
+# remove token from the username2tokens
+def del_cookie_from_user(redis_conn: redis.Redis, username: str, token: str):
     redis_conn.srem(userdb(username), token)
 
+# remove all the expired, point to null cookie and point to another user cookie.
+def del_invalid_cookies_from_user(redis_conn: redis.Redis, username: str):
+    cookies = redis_conn.smembers(userdb(username))
+
+    count = 0
+    for cookie in cookies:
+        res = check_cookie(redis_conn, cookie)
+        if res is None:
+            del_cookie_from_user(redis_conn, username, cookie)
+            count += 1
+        elif res == "":
+            del_cookie(redis_conn, cookie)
+            count += 1
+        elif res != username:
+            del_cookie_from_user(redis_conn, username, cookie)
+            count += 1
+
+    return count
+
+
+# check the token, if expired return "", if token to no user return None, else return the username
 def check_cookie(redis_conn: redis.Redis, token: str):
     # TODO: should add timeout check for this cookie.
 
     username, timeout = get_cookie(redis_conn, token)
+    if not username:
+        return None
 
     timeout = dateutil.parser.parse(timeout)
     if datetime.datetime.now() > timeout:
-        del_cookie(redis_conn, token)
         return None
     else:
         return username
 
-def add_cookie(redis_conn: redis.Redis, username: str, token: str):
+# create cookie for username, if cookies for a specific user too much, remove some. return username on ok, None on fail
+def create_cookie(redis_conn: redis.Redis, username: str):
     if redis_conn.scard(userdb(username)) > MAX_TOKEN_PER_USER:
-        remove_old_cookie_for_user(redis_conn, username, 1)
-    redis_conn.hset(REDIS_BASE, token, username + ';' + (datetime.datetime.now() + EXPIRE_TIMEOUT).strftime(TIMEOUT_FORMAT))
-    redis_conn.sadd(userdb(username), token)
+        remove_cookies(redis_conn, username, 1)
+    cookie = secrets.token_urlsafe(64)
+    # TODO: should check all token2user is respond to user2token in sometime.
+    # TODO: should do something to deal with error in the follow operation.
+    redis_conn.hset(REDIS_BASE, cookie, username + ';' + (datetime.datetime.now() + EXPIRE_TIMEOUT).strftime(TIMEOUT_FORMAT))
+    redis_conn.sadd(userdb(username), cookie)
 
+    return cookie
 
-def remove_old_cookie_for_user(redis_conn: redis.Redis, username: str, force: int = 0):
-    tokens = redis_conn.smembers(userdb(username))
-
-    deleted = 0
-    for i in tokens:
-        res = check_cookie(redis_conn, i)
-        if not res:
-            deleted += 1
+# remove `force` number cookies for username, maybe randomly remove cookie.
+def remove_cookies(redis_conn: redis.Redis, username: str, force: int = 0):
+    deleted = del_invalid_cookies_from_user(redis_conn, username)
 
     if deleted >= force:
         return
 
     for i in range(force - deleted):
-        redis_conn.spop(userdb(username))
+        cookie = redis_conn.srandmember(userdb(username))
+        del_cookie(redis_conn, cookie)
 
+def remove_cookies_force(redis_conn: redis.Redis, username: str, force: int = 0):
+    for i in range(force):
+        cookie = redis_conn.srandmember(userdb(username))
+        del_cookie(redis_conn, cookie)
 
 @router.on_event("startup")
 async def init():
@@ -152,7 +193,7 @@ def get_user(session: Session, username: str = None, email: str = None, multi: b
         return res.first()
 
 def hhhhash(s):
-    return hashlib.md5(s)
+    return hashlib.blake2b((s + digest_salt).encode("utf-8")).hexdigest()
 
 # username should be unique between users, and the same email could be used by multiply users
 # only admin could create user.
@@ -184,8 +225,7 @@ async def login(user: UserBaseModel, session: Session = Depends(get_session),
         return {"ok": False, "message": "wrong username or password"}
 
     if hhhhash(user.password) == user_in_table.usertoken:
-        cookie = secrets.token_urlsafe(64)
-        add_cookie(redis_conn, user.name, cookie)
+        cookie = create_cookie(redis_conn, user.name)
 
         return {"ok": True, "token": cookie}
     else:
