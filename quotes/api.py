@@ -57,10 +57,11 @@ async def init():
 
     password = getpass.getpass("请输入密码")
 
-    engine = create_engine(f"mysql+pymysql://qza2468:{password}@localhost/scraped")
+    sql_engine = create_engine(f"mysql+pymysql://qza2468:{password}@localhost/scraped")
 
-    session = Session(engine)
+    session = Session(sql_engine)
     quotes_index_max = session.query(QuoteSchema).count() # if there is error just exit the program, no need for close.
+    session.close()
 
 
 @router.get("/hello/")

@@ -22,7 +22,7 @@ class UserBaseModel(BaseModel):
 class UserInModel(UserBaseModel):
     email: str
 
-class UserInfoModel:
+class UserInfoModel(UserBaseModel):
     name: str
     email: str
 
@@ -91,15 +91,16 @@ def get_cookie(redis_conn: redis.Redis, token: str):
         return None, None
 
 # remove the token from token2user and user2tokens, if token to no user, then just return.
-def del_cookie(redis_conn: redis.Redis, token: str):
+# could add an optional user_name_ to delete it from user2tokens too.
+def del_cookie(redis_conn: redis.Redis, token: str, user_name_: str = None):
     username, timeout = get_cookie(redis_conn, token)
-    if not username:
+    if not username and user_name_:
         return
-
-    redis_conn.hdel(REDIS_BASE, token)
-
-    if username:
+    elif username:
+        redis_conn.hdel(REDIS_BASE, token)
         redis_conn.srem(userdb(username), token)
+    elif user_name_:
+        redis_conn.srem(userdb(user_name_), token)
 
 # remove token from the username2tokens
 def del_cookie_from_user(redis_conn: redis.Redis, username: str, token: str):
@@ -116,10 +117,11 @@ def del_invalid_cookies_from_user(redis_conn: redis.Redis, username: str):
             del_cookie_from_user(redis_conn, username, cookie)
             count += 1
         elif res == "":
-            del_cookie(redis_conn, cookie)
+            del_cookie(redis_conn, cookie, username)
             count += 1
         elif res != username:
             del_cookie_from_user(redis_conn, username, cookie)
+            del_cookie(redis_conn, cookie)
             count += 1
 
     return count
@@ -158,14 +160,13 @@ def remove_cookies(redis_conn: redis.Redis, username: str, force: int = 0):
     if deleted >= force:
         return
 
-    for i in range(force - deleted):
-        cookie = redis_conn.srandmember(userdb(username))
-        del_cookie(redis_conn, cookie)
+    remove_cookies_force(redis_conn, username, force - deleted)
 
+# remove `force` number cookies randomly from username
 def remove_cookies_force(redis_conn: redis.Redis, username: str, force: int = 0):
     for i in range(force):
         cookie = redis_conn.srandmember(userdb(username))
-        del_cookie(redis_conn, cookie)
+        del_cookie(redis_conn, cookie, username)
 
 @router.on_event("startup")
 async def init():
@@ -217,7 +218,7 @@ async def createuser(user: UserInModel, session: Session = Depends(get_session))
     return {"ok": True, "message": "Congratulations"}
 
 
-@router.post("login")
+@router.post("/login")
 async def login(user: UserBaseModel, session: Session = Depends(get_session),
                 redis_conn: redis.Redis = Depends(get_redis_pool)):
     user_in_table = get_user(session, user.name)
@@ -231,13 +232,13 @@ async def login(user: UserBaseModel, session: Session = Depends(get_session),
     else:
         return {"ok": False, "message": "wrong username or password"}
 
-@router.post("logout")
+@router.post("/logout")
 async def logout(user: UserCookie, session: Session = Depends(get_session),
                  redis_conn: redis.Redis = Depends(get_redis_pool)):
     del_cookie(redis_conn, user.token)
 
 # only with both username and email, could figure out whether a user exist in the system
-@router.post("exists")
+@router.post("/exists")
 async def user_exists(userinfo: UserInfoModel, session: Session = Depends(get_session)):
     user = get_user(session, username=userinfo.name, email=userinfo.email)
     if not user:
