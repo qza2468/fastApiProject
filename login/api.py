@@ -1,4 +1,4 @@
-from fastapi import Depends, APIRouter, Body
+from fastapi import Depends, APIRouter, Body, Header
 from pydantic import BaseModel
 from sqlalchemy.orm import declarative_base, Session
 from sqlalchemy import create_engine, Column, Integer, Text, String
@@ -84,7 +84,7 @@ def get_redis_pool():
 
 # try to get the token, if not exist return (None, None), else return (username, expire)
 def get_cookie(redis_conn: redis.Redis, token: str):
-    cookie = redis_conn.hget(REDIS_BASE, token)
+    cookie = redis_conn.hget(REDIS_BASE, token).decode()
     if cookie:
         return cookie.split(";", 1)
     else:
@@ -137,9 +137,13 @@ def check_cookie(redis_conn: redis.Redis, token: str):
 
     timeout = dateutil.parser.parse(timeout)
     if datetime.datetime.now() > timeout:
-        return None
+        return ""
     else:
         return username
+
+def check_cookie_depend(redis_conn: redis.Redis = Depends(get_redis_pool),
+                        token: str = Header(None)):
+    return check_cookie(redis_conn, token)
 
 # create cookie for username, if cookies for a specific user too much, remove some. return username on ok, None on fail
 def create_cookie(redis_conn: redis.Redis, username: str):
@@ -178,6 +182,7 @@ async def init():
 
     Base.metadata.create_all(sql_engine)
 
+
 def get_user(session: Session, username: str = None, email: str = None, multi: bool = False):
     res = session.query(UserInSchema)
     if username:
@@ -198,6 +203,7 @@ def hhhhash(s):
 
 # username should be unique between users, and the same email could be used by multiply users
 # only admin could create user.
+@router.post("/createuser")
 async def createuser(user: UserInModel, session: Session = Depends(get_session)):
     # TODO: should check whether this is tangled by the admin user.
     if len(user.name) > 64 or len(user.name) == 0:
