@@ -22,6 +22,7 @@ class FileInfo(BaseModel):
 router = APIRouter()
 
 def transfer_file_path(filepath: str):
+    filepath = "./" + filepath # fix an error
     abs_path = os.path.abspath(os.path.join(ROOT_PATH, filepath))
     if os.path.commonprefix([abs_path, ROOT_PATH]) != ROOT_PATH:
         raise HTTPException(status_code=404, detail="error file path")
