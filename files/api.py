@@ -84,7 +84,9 @@ async def ls_dir(dirinfo: FileInfo,
     res = {}
 
     try:
-        for file_name in os.listdir(abs_path):
+        file_names = os.listdir(abs_path)
+        file_names.append(".") # add the directory info to res.
+        for file_name in file_names:
             abs_file_path = os.path.join(abs_path, file_name)
             try:
                 file_stat = os.stat(abs_file_path)
