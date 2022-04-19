@@ -6,6 +6,7 @@ import os.path
 import os
 import stat
 import sys
+import shutil
 
 parent_dir_name = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.append(parent_dir_name)
@@ -29,7 +30,14 @@ def transfer_file_path(filepath: str):
 
     return abs_path
 
-@router.post("/files/get")
+def transfer_file_path_no_root(filepath: str):
+    abs_path = transfer_file_path(filepath)
+    if os.path.samefile(abs_path, ROOT_PATH):
+        raise HTTPException(status_code=404, detail="error file path")
+
+    return abs_path
+
+@router.post("/files/download")
 async def get_file(fileinfo: FileInfo,
                    username: str = Depends(loginapi.check_cookie_depend)):
     if username != "qza2468":
@@ -45,7 +53,7 @@ async def get_file(fileinfo: FileInfo,
     else:
         raise HTTPException(status_code=404, detail="path point to not a dir or file")
 
-@router.post("/files/create/")
+@router.post("/files/upload/")
 async def create_file(file_content: UploadFile = File(...),
                       file_where: str = Header(None),
                       username: str = Depends(loginapi.check_cookie_depend)):
@@ -56,7 +64,7 @@ async def create_file(file_content: UploadFile = File(...),
         with open(abs_path, "x") as file_object:
             file_object.write(file_content.file.read())
     except FileExistsError:
-        raise HTTPException(status_code=404, detail="file exists")
+        raise HTTPException(status_code=404, detail="path exists")
     except:
         raise HTTPException(status_code=404, detail="upload error")
 
@@ -67,7 +75,7 @@ async def create_dir(dir_where: str = Header(None),
                      username: str = Depends(loginapi.check_cookie_depend)):
     if username != "qza2468":
         raise HTTPException(status_code=401)
-    abs_path = transfer_file_path(dir_where)
+    abs_path = transfer_file_path_no_root(dir_where)
     try:
         os.mkdir(abs_path)
     except FileExistsError:
@@ -75,7 +83,7 @@ async def create_dir(dir_where: str = Header(None),
     return Response(status_code=200)
 
 @router.post("/files/ls/")
-async def ls_dir(dirinfo: FileInfo,
+async def ls_path(dirinfo: FileInfo,
                  username: str = Depends(loginapi.check_cookie_depend)):
     if username != "qza2468":
         raise HTTPException(status_code=401, detail="you have no right")
@@ -104,49 +112,51 @@ async def ls_dir(dirinfo: FileInfo,
                 "st_ctime": file_stat.st_ctime,
             }
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="path no exists")
+        raise HTTPException(status_code=404, detail="path not exists")
     except NotADirectoryError:
-        raise HTTPException(status_code=404, detail="path not point to a dir")
+        try:
+            file_stat = os.stat(abs_path)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="path not exists")
 
     return res
 
-@router.post("files/ls_file")
-async def ls_file(fileinfo: FileInfo,
-                  username: str = Depends(loginapi.check_cookie_depend)):
-    if username != "qza2468":
-        raise HTTPException(status_code=401)
-    abs_path = transfer_file_path(fileinfo.filepath)
-    try:
-        file_stat = os.stat(abs_path)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="path not exists")
 
-    return {
-                "st_mode": file_stat.st_mode,
-                "st_nlink": file_stat.st_nlink,
-                "st_uid": file_stat.st_uid,
-                "st_gid": file_stat.st_gid,
-                "st_size": file_stat.st_size,
-                "st_atime": file_stat.st_atime,
-                "st_mtime": file_stat.st_mtime,
-                "st_ctime": file_stat.st_ctime,
-            }
-
-@router.post("/files/unlink")
-async def unlink_file(fileinfo: FileInfo,
+@router.post("/files/rm")
+async def unlink_path(fileinfo: FileInfo,
                       username: str = Depends(loginapi.check_cookie_depend)):
     if username != "qza2468":
         raise HTTPException(status_code=401)
-    abs_path = transfer_file_path(fileinfo.filepath)
-    if os.path.samefile(abs_path, ROOT_PATH):
-        raise HTTPException(status_code=404, detail="error file path")
+    abs_path = transfer_file_path_no_root(fileinfo.filepath)
 
-    if not os.path.exists(abs_path):
-        pass
-    elif os.path.isfile(abs_path):
-        os.unlink(abs_path)
-    elif os.path.isdir(abs_path):
-        os.rmdir(abs_path)
-    else:
-        raise HTTPException(status_code=404, detail="path point to no file or dir")
+    try:
+        if not os.path.exists(abs_path):
+            pass
+        elif os.path.isfile(abs_path):
+            os.unlink(abs_path)
+        elif os.path.isdir(abs_path):
+            shutil.rmtree(abs_path, ignore_errors=True)
+        else:
+            raise HTTPException(status_code=404, detail="path not exists")
+    except:
+        raise HTTPException(status_code=404, detail="error")
+
+    return Response(status_code=200)
+
+
+@router.post("files/mv")
+async def move_file(fileinfo: FileInfo,
+                    new_file_name: str,
+                    username: str = Depends(loginapi.check_cookie_depend)):
+    if username != "qza2468":
+        raise HTTPException(status_code=401)
+
+    origin_abs_path = transfer_file_path_no_root(fileinfo.filepath)
+    new_abs_path = transfer_file_path(new_file_name)
+
+    try:
+        os.rename(origin_abs_path, new_abs_path)
+    except:
+        raise HTTPException(status_code=404, detail="what")
+
     return Response(status_code=200)
