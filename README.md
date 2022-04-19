@@ -4,8 +4,6 @@ This is a file browser.
 
 backend using fastapi, frontend using godot(though there are better choices, but all right)
 
-
-
 # TODO:
 
 1. Later will more concern with frontend, instead of backend.
@@ -19,3 +17,7 @@ backend using fastapi, frontend using godot(though there are better choices, but
 2. and i will remove the ability of multiply user, as it has no sense for me and most user
 
 3. i would concern more at usability and **security**
+
+
+
+*because of the changes of interface*, both qt and godot version frontend is not usable! 
